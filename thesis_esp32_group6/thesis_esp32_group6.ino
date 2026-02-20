@@ -6,9 +6,12 @@
 // ===================== WiFi =====================
 const char* ssid = "Raspi-Group6-Hotspot";
 const char* password = "raspberry123";
-
 const char* serverURL = "http://10.42.0.1:3000/sensor_readings";
 const char* deviceId = "esp32_01";
+
+// ===================== RELAYS =====================
+const int RELAY_BLOWER  = 25; // Blue
+const int RELAY_EXHAUST = 33; // Green
 
 // ===================== HX711 =====================
 const int HX1_DOUT = 16;
@@ -59,41 +62,40 @@ int readAnalogAvg(int pin, int samples) {
 
 float moisturePercent(int raw, int dryVal, int wetVal) {
   if (dryVal == wetVal) return 0.0f;
-
   float pct = (raw - dryVal) * 100.0f / (wetVal - dryVal);
   return clampFloat(pct, 0.0f, 100.0f);
 }
 
 float readWeightKg(HX711& scale, float maxKg) {
   if (!scale.is_ready()) return 0.0f;
-
   float kg = scale.get_units(10);
-
   if (kg < 0) kg = 0;
   if (kg > maxKg) kg = maxKg;
-
   return kg;
 }
 
 void connectWiFi() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
   Serial.println("\nWiFi Connected!");
 }
 
 // ===================== Setup =====================
 void setup() {
-
   Serial.begin(115200);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
+
+  // Relay setup (ACTIVE LOW)
+  pinMode(RELAY_BLOWER, OUTPUT);
+  pinMode(RELAY_EXHAUST, OUTPUT);
+  digitalWrite(RELAY_BLOWER, HIGH);   // OFF
+  digitalWrite(RELAY_EXHAUST, HIGH);  // OFF
 
   // HX711
   scale1.begin(HX1_DOUT, HX1_SCK);
@@ -104,7 +106,6 @@ void setup() {
   scale2.set_scale(calibrationFactor2);
   scale2.tare();
 
-  // DHT
   dht.begin();
 
   pinMode(MOISTURE1_PIN, INPUT);
@@ -116,7 +117,6 @@ void setup() {
 // ===================== Loop =====================
 void loop() {
 
-  // Reconnect WiFi if needed
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
   }
@@ -131,6 +131,9 @@ void loop() {
   float hum = dht.readHumidity();
   float tempC = dht.readTemperature();
 
+  if (isnan(tempC)) tempC = 0;
+  if (isnan(hum)) hum = 0;
+
   int moist1Raw = readAnalogAvg(MOISTURE1_PIN, 20);
   int moist2Raw = readAnalogAvg(MOISTURE2_PIN, 20);
 
@@ -139,25 +142,46 @@ void loop() {
 
   float avgMoisture = (moist1Pct + moist2Pct) / 2.0;
 
-  // ===== Serial Debug =====
+  // ===================== RELAY CONTROL =====================
+
+  // Exhaust: ON if temperature > 28°C
+  if (tempC > 40) {
+    digitalWrite(RELAY_EXHAUST, LOW);   // ON
+  } else {
+    digitalWrite(RELAY_EXHAUST, HIGH);  // OFF
+  }
+
+  // Blower: OFF if moisture > 30%
+  if (avgMoisture <= 14) {
+    digitalWrite(RELAY_BLOWER, HIGH);   // OFF
+  } else {
+    digitalWrite(RELAY_BLOWER, LOW);    // ON
+  }
+
+  // ===================== Status =====================
+  String status;
+
+  if (avgMoisture <= 14.0) {
+    status = "Completed";
+  } 
+  else if (avgMoisture <= 20.0) {
+    status = "Warning";
+  } 
+  else {
+    status = "Drying";
+  }
+
+  // ===================== Serial Debug =====================
   Serial.println("================================");
-  Serial.print("Temp: "); Serial.print(tempC); Serial.println(" C");
-  Serial.print("Humidity: "); Serial.print(hum); Serial.println(" %");
+  Serial.print("Temp: "); Serial.println(tempC);
+  Serial.print("Humidity: "); Serial.println(hum);
+  Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
+  Serial.print("Blower: ");
+  Serial.println(avgMoisture > 30.0 ? "OFF" : "ON");
+  Serial.print("Exhaust: ");
+  Serial.println(tempC > 28.0 ? "ON" : "OFF");
 
-  Serial.print("Weight1: "); Serial.print(weight1Kg); Serial.println(" kg");
-  Serial.print("Weight2: "); Serial.print(weight2Kg); Serial.println(" kg");
-
-  Serial.print("Moist1 Raw: "); Serial.println(moist1Raw);
-  Serial.print("Moist2 Raw: "); Serial.println(moist2Raw);
-
-  Serial.print("Moist1 %: "); Serial.println(moist1Pct);
-  Serial.print("Moist2 %: "); Serial.println(moist2Pct);
-
-  Serial.print("Avg Moisture: ");
-  Serial.print(avgMoisture);
-  Serial.println(" %");
-
-  // ===== Send to Server =====
+  // ===================== Send to Server =====================
   HTTPClient http;
   http.begin(serverURL);
   http.addHeader("Content-Type", "application/json");
@@ -166,15 +190,14 @@ void loop() {
   json += "\"device_id\":\"" + String(deviceId) + "\",";
   json += "\"temperature\":" + String(tempC) + ",";
   json += "\"humidity\":" + String(hum) + ",";
-  json += "\"weight1\":" + String(weight1Kg) + ",";
-  json += "\"weight2\":" + String(weight2Kg) + ",";
   json += "\"moisture1\":" + String(moist1Pct) + ",";
   json += "\"moisture2\":" + String(moist2Pct) + ",";
-  json += "\"avg_moisture\":" + String(avgMoisture);
+  json += "\"weight1\":" + String(weight1Kg) + ",";
+  json += "\"weight2\":" + String(weight2Kg) + ",";
+  json += "\"status\":\"" + status + "\"";
   json += "}";
 
   int httpResponseCode = http.POST(json);
-
   Serial.print("HTTP Response: ");
   Serial.println(httpResponseCode);
 
