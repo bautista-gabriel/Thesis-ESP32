@@ -10,8 +10,8 @@ const char* serverURL = "http://10.42.0.1:3000/sensor_readings";
 const char* deviceId = "esp32_01";
 
 // ===================== RELAYS =====================
-const int RELAY_BLOWER  = 25; // Blue
-const int RELAY_EXHAUST = 33; // Green
+const int RELAY_BLOWER  = 25; 
+const int RELAY_EXHAUST = 33;
 
 // ===================== HX711 =====================
 const int HX1_DOUT = 16;
@@ -33,23 +33,15 @@ DHT dht(DHTPIN, DHTTYPE);
 const int MOISTURE1_PIN = 34;
 const int MOISTURE2_PIN = 35;
 
-int moisture1Dry = 3200;
-int moisture1Wet = 1500;
-
-int moisture2Dry = 3200;
-int moisture2Wet = 1500;
+// ===== REAL CALIBRATION VALUES (CHANGE THESE) =====
+int rawDry14 = 2542;   // raw when grain = 14%
+int rawWet39 = 1700;   // raw when grain = 39%
 
 // ===================== Timing =====================
 unsigned long lastSend = 0;
 const unsigned long sendEveryMs = 5000;
 
-// ===================== Helper Functions =====================
-
-float clampFloat(float v, float lo, float hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
-}
+// ===================== Helper =====================
 
 int readAnalogAvg(int pin, int samples) {
   long sum = 0;
@@ -60,10 +52,15 @@ int readAnalogAvg(int pin, int samples) {
   return sum / samples;
 }
 
-float moisturePercent(int raw, int dryVal, int wetVal) {
-  if (dryVal == wetVal) return 0.0f;
-  float pct = (raw - dryVal) * 100.0f / (wetVal - dryVal);
-  return clampFloat(pct, 0.0f, 100.0f);
+// ===== REAL GRAIN MOISTURE CALCULATION =====
+float grainMoisturePercent(int raw) {
+
+  float moisture =
+    14.0 +
+    ((float)(rawDry14 - raw) * (39.0 - 14.0)) /
+    (rawDry14 - rawWet39);
+
+  return moisture;
 }
 
 float readWeightKg(HX711& scale, float maxKg) {
@@ -86,18 +83,18 @@ void connectWiFi() {
 
 // ===================== Setup =====================
 void setup() {
+
   Serial.begin(115200);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
-  // Relay setup (ACTIVE LOW)
   pinMode(RELAY_BLOWER, OUTPUT);
   pinMode(RELAY_EXHAUST, OUTPUT);
-  digitalWrite(RELAY_BLOWER, HIGH);   // OFF
-  digitalWrite(RELAY_EXHAUST, HIGH);  // OFF
 
-  // HX711
+  digitalWrite(RELAY_BLOWER, HIGH);  
+  digitalWrite(RELAY_EXHAUST, HIGH); 
+
   scale1.begin(HX1_DOUT, HX1_SCK);
   scale1.set_scale(calibrationFactor1);
   scale1.tare();
@@ -107,9 +104,6 @@ void setup() {
   scale2.tare();
 
   dht.begin();
-
-  pinMode(MOISTURE1_PIN, INPUT);
-  pinMode(MOISTURE2_PIN, INPUT);
 
   connectWiFi();
 }
@@ -137,25 +131,25 @@ void loop() {
   int moist1Raw = readAnalogAvg(MOISTURE1_PIN, 20);
   int moist2Raw = readAnalogAvg(MOISTURE2_PIN, 20);
 
-  float moist1Pct = moisturePercent(moist1Raw, moisture1Dry, moisture1Wet);
-  float moist2Pct = moisturePercent(moist2Raw, moisture2Dry, moisture2Wet);
+  float moist1Pct = grainMoisturePercent(moist1Raw);
+  float moist2Pct = grainMoisturePercent(moist2Raw);
 
   float avgMoisture = (moist1Pct + moist2Pct) / 2.0;
 
   // ===================== RELAY CONTROL =====================
 
-  // Exhaust: ON if temperature > 28°C
-  if (tempC > 40) {
-    digitalWrite(RELAY_EXHAUST, LOW);   // ON
+  // Exhaust ON if temperature > 40°C
+  if (tempC > 40.0) {
+    digitalWrite(RELAY_EXHAUST, LOW);
   } else {
-    digitalWrite(RELAY_EXHAUST, HIGH);  // OFF
+    digitalWrite(RELAY_EXHAUST, HIGH);
   }
 
-  // Blower: OFF if moisture > 30%
-  if (avgMoisture <= 14) {
-    digitalWrite(RELAY_BLOWER, HIGH);   // OFF
+  // Blower OFF when grain <= 14%
+  if (avgMoisture <= 14.0) {
+    digitalWrite(RELAY_BLOWER, HIGH); 
   } else {
-    digitalWrite(RELAY_BLOWER, LOW);    // ON
+    digitalWrite(RELAY_BLOWER, LOW);
   }
 
   // ===================== Status =====================
@@ -171,15 +165,15 @@ void loop() {
     status = "Drying";
   }
 
-  // ===================== Serial Debug =====================
+  // ===================== Debug =====================
   Serial.println("================================");
   Serial.print("Temp: "); Serial.println(tempC);
   Serial.print("Humidity: "); Serial.println(hum);
-  Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
-  Serial.print("Blower: ");
-  Serial.println(avgMoisture > 30.0 ? "OFF" : "ON");
-  Serial.print("Exhaust: ");
-  Serial.println(tempC > 28.0 ? "ON" : "OFF");
+  Serial.print("Moist1 Raw: "); Serial.println(moist1Raw);
+  Serial.print("Moist1 %: "); Serial.println(moist1Pct);
+  Serial.print("Moist2 %: "); Serial.println(moist2Pct);
+  Serial.print("Average Moisture: "); Serial.println(avgMoisture);
+  Serial.print("Status: "); Serial.println(status);
 
   // ===================== Send to Server =====================
   HTTPClient http;
