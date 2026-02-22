@@ -9,8 +9,8 @@ const char* password = "raspberry123";
 const char* serverURL = "http://10.42.0.1:3000/sensor_readings";
 const char* deviceId = "esp32_01";
 
-// ===================== RELAYS =====================
-const int RELAY_BLOWER  = 25; 
+// ===================== RELAYS (ACTIVE LOW) =====================
+const int RELAY_BLOWER  = 25;
 const int RELAY_EXHAUST = 33;
 
 // ===================== HX711 =====================
@@ -29,19 +29,19 @@ float calibrationFactor2 = 211830.0;
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
 
-// ===================== Moisture Sensors =====================
+// ===================== Moisture =====================
 const int MOISTURE1_PIN = 34;
 const int MOISTURE2_PIN = 35;
 
-// ===== REAL CALIBRATION VALUES (CHANGE THESE) =====
-int rawDry14 = 2542;   // raw when grain = 14%
-int rawWet39 = 1700;   // raw when grain = 39%
+// ====== REAL CALIBRATION VALUES ======
+float rawAt14 = 2542.0;   // raw when moisture meter = 14%
+float rawAt39 = 1700.0;   // CHANGE to your real raw at 39%
 
 // ===================== Timing =====================
 unsigned long lastSend = 0;
 const unsigned long sendEveryMs = 5000;
 
-// ===================== Helper =====================
+// ===================== FUNCTIONS =====================
 
 int readAnalogAvg(int pin, int samples) {
   long sum = 0;
@@ -52,15 +52,13 @@ int readAnalogAvg(int pin, int samples) {
   return sum / samples;
 }
 
-// ===== REAL GRAIN MOISTURE CALCULATION =====
+// Linear MCwb Calibration
 float grainMoisturePercent(int raw) {
 
-  float moisture =
-    14.0 +
-    ((float)(rawDry14 - raw) * (39.0 - 14.0)) /
-    (rawDry14 - rawWet39);
+  float a = (39.0 - 14.0) / (rawAt39 - rawAt14);
+  float b = 14.0 - (a * rawAt14);
 
-  return moisture;
+  return (a * raw) + b;
 }
 
 float readWeightKg(HX711& scale, float maxKg) {
@@ -81,7 +79,7 @@ void connectWiFi() {
   Serial.println("\nWiFi Connected!");
 }
 
-// ===================== Setup =====================
+// ===================== SETUP =====================
 void setup() {
 
   Serial.begin(115200);
@@ -91,9 +89,8 @@ void setup() {
 
   pinMode(RELAY_BLOWER, OUTPUT);
   pinMode(RELAY_EXHAUST, OUTPUT);
-
-  digitalWrite(RELAY_BLOWER, HIGH);  
-  digitalWrite(RELAY_EXHAUST, HIGH); 
+  digitalWrite(RELAY_BLOWER, HIGH);
+  digitalWrite(RELAY_EXHAUST, HIGH);
 
   scale1.begin(HX1_DOUT, HX1_SCK);
   scale1.set_scale(calibrationFactor1);
@@ -108,7 +105,7 @@ void setup() {
   connectWiFi();
 }
 
-// ===================== Loop =====================
+// ===================== LOOP =====================
 void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -128,8 +125,8 @@ void loop() {
   if (isnan(tempC)) tempC = 0;
   if (isnan(hum)) hum = 0;
 
-  int moist1Raw = readAnalogAvg(MOISTURE1_PIN, 20);
-  int moist2Raw = readAnalogAvg(MOISTURE2_PIN, 20);
+  int moist1Raw = readAnalogAvg(MOISTURE1_PIN, 80);
+  int moist2Raw = readAnalogAvg(MOISTURE2_PIN, 80);
 
   float moist1Pct = grainMoisturePercent(moist1Raw);
   float moist2Pct = grainMoisturePercent(moist2Raw);
@@ -138,44 +135,33 @@ void loop() {
 
   // ===================== RELAY CONTROL =====================
 
-  // Exhaust ON if temperature > 40°C
-  if (tempC > 40.0) {
+  if (tempC > 40.0)
     digitalWrite(RELAY_EXHAUST, LOW);
-  } else {
+  else
     digitalWrite(RELAY_EXHAUST, HIGH);
-  }
 
-  // Blower OFF when grain <= 14%
-  if (avgMoisture <= 14.0) {
-    digitalWrite(RELAY_BLOWER, HIGH); 
-  } else {
+  if (avgMoisture <= 14.0)
+    digitalWrite(RELAY_BLOWER, HIGH);
+  else
     digitalWrite(RELAY_BLOWER, LOW);
-  }
 
-  // ===================== Status =====================
+  // ===================== STATUS =====================
   String status;
+  if (avgMoisture <= 14.0) status = "Completed";
+  else if (avgMoisture <= 20.0) status = "Warning";
+  else status = "Drying";
 
-  if (avgMoisture <= 14.0) {
-    status = "Completed";
-  } 
-  else if (avgMoisture <= 20.0) {
-    status = "Warning";
-  } 
-  else {
-    status = "Drying";
-  }
-
-  // ===================== Debug =====================
+  // ===================== DEBUG (FOR ERROR TABLE) =====================
   Serial.println("================================");
-  Serial.print("Temp: "); Serial.println(tempC);
-  Serial.print("Humidity: "); Serial.println(hum);
-  Serial.print("Moist1 Raw: "); Serial.println(moist1Raw);
-  Serial.print("Moist1 %: "); Serial.println(moist1Pct);
-  Serial.print("Moist2 %: "); Serial.println(moist2Pct);
-  Serial.print("Average Moisture: "); Serial.println(avgMoisture);
+  Serial.print("Raw1: "); Serial.println(moist1Raw);
+  Serial.print("Raw2: "); Serial.println(moist2Raw);
+  Serial.print("Sensor MC1: "); Serial.println(moist1Pct);
+  Serial.print("Sensor MC2: "); Serial.println(moist2Pct);
+  Serial.print("Average Sensor MC: "); Serial.println(avgMoisture);
+  Serial.print("Temperature: "); Serial.println(tempC);
   Serial.print("Status: "); Serial.println(status);
 
-  // ===================== Send to Server =====================
+  // ===================== SEND =====================
   HTTPClient http;
   http.begin(serverURL);
   http.addHeader("Content-Type", "application/json");
