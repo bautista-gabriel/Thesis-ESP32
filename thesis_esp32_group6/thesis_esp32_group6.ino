@@ -29,13 +29,24 @@ float calibrationFactor2 = 211830.0;
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
 
-// ===================== Moisture =====================
-const int MOISTURE1_PIN = 34;
-const int MOISTURE2_PIN = 35;
+// ===================== 6 Moisture Sensors (ADC1 SAFE PINS) =====================
+const int MOISTURE1_PIN = 34;  // Tray 1
+const int MOISTURE2_PIN = 35;  // Tray 2
+const int MOISTURE3_PIN = 32;  // Tray 3
+const int MOISTURE4_PIN = 36;  // Tray 4 (input only)
+const int MOISTURE5_PIN = 39;  // Tray 5 (input only)
+//const int MOISTURE6_PIN = 33;  // ❌ WAIT — 33 is relay used
+
+// IMPORTANT: Since 33 is used by RELAY_EXHAUST,
+// we must NOT reuse it.
+
+// So change this instead:
+#undef MOISTURE6_PIN
+const int MOISTURE6_PIN = 13;  // Tray 6 (ADC2 — use carefully)
 
 // ====== REAL CALIBRATION VALUES ======
 float rawAt14 = 2542.0;   // raw when moisture meter = 14%
-float rawAt39 = 1700.0;   // CHANGE to your real raw at 39%
+float rawAt39 = 1700.0;   // raw when moisture meter = 39%
 
 // ===================== Timing =====================
 unsigned long lastSend = 0;
@@ -52,12 +63,9 @@ int readAnalogAvg(int pin, int samples) {
   return sum / samples;
 }
 
-// Linear MCwb Calibration
 float grainMoisturePercent(int raw) {
-
   float a = (39.0 - 14.0) / (rawAt39 - rawAt14);
   float b = 14.0 - (a * rawAt14);
-
   return (a * raw) + b;
 }
 
@@ -115,23 +123,33 @@ void loop() {
   if (millis() - lastSend < sendEveryMs) return;
   lastSend = millis();
 
-  // ===== Read Sensors =====
+  // ===== Read Weights =====
   float weight1Kg = readWeightKg(scale1, 10.0f);
   float weight2Kg = readWeightKg(scale2, 10.0f);
 
+  // ===== Read Temperature & Humidity =====
   float hum = dht.readHumidity();
   float tempC = dht.readTemperature();
 
   if (isnan(tempC)) tempC = 0;
   if (isnan(hum)) hum = 0;
 
-  int moist1Raw = readAnalogAvg(MOISTURE1_PIN, 80);
-  int moist2Raw = readAnalogAvg(MOISTURE2_PIN, 80);
+  // ===== Read 6 Moisture Sensors =====
+  int raw1 = readAnalogAvg(MOISTURE1_PIN, 80);
+  int raw2 = readAnalogAvg(MOISTURE2_PIN, 80);
+  int raw3 = readAnalogAvg(MOISTURE3_PIN, 80);
+  int raw4 = readAnalogAvg(MOISTURE4_PIN, 80);
+  int raw5 = readAnalogAvg(MOISTURE5_PIN, 80);
+  int raw6 = readAnalogAvg(MOISTURE6_PIN, 80);
 
-  float moist1Pct = grainMoisturePercent(moist1Raw);
-  float moist2Pct = grainMoisturePercent(moist2Raw);
+  float mc1 = grainMoisturePercent(raw1);
+  float mc2 = grainMoisturePercent(raw2);
+  float mc3 = grainMoisturePercent(raw3);
+  float mc4 = grainMoisturePercent(raw4);
+  float mc5 = grainMoisturePercent(raw5);
+  float mc6 = grainMoisturePercent(raw6);
 
-  float avgMoisture = (moist1Pct + moist2Pct) / 2.0;
+  float avgMoisture = (mc1 + mc2 + mc3 + mc4 + mc5 + mc6) / 6.0;
 
   // ===================== RELAY CONTROL =====================
 
@@ -151,17 +169,19 @@ void loop() {
   else if (avgMoisture <= 20.0) status = "Warning";
   else status = "Drying";
 
-  // ===================== DEBUG (FOR ERROR TABLE) =====================
+  // ===================== DEBUG =====================
   Serial.println("================================");
-  Serial.print("Raw1: "); Serial.println(moist1Raw);
-  Serial.print("Raw2: "); Serial.println(moist2Raw);
-  Serial.print("Sensor MC1: "); Serial.println(moist1Pct);
-  Serial.print("Sensor MC2: "); Serial.println(moist2Pct);
-  Serial.print("Average Sensor MC: "); Serial.println(avgMoisture);
+  Serial.print("Tray1 MC: "); Serial.println(mc1);
+  Serial.print("Tray2 MC: "); Serial.println(mc2);
+  Serial.print("Tray3 MC: "); Serial.println(mc3);
+  Serial.print("Tray4 MC: "); Serial.println(mc4);
+  Serial.print("Tray5 MC: "); Serial.println(mc5);
+  Serial.print("Tray6 MC: "); Serial.println(mc6);
+  Serial.print("Average MC: "); Serial.println(avgMoisture);
   Serial.print("Temperature: "); Serial.println(tempC);
   Serial.print("Status: "); Serial.println(status);
 
-  // ===================== SEND =====================
+  // ===================== SEND TO SERVER =====================
   HTTPClient http;
   http.begin(serverURL);
   http.addHeader("Content-Type", "application/json");
@@ -170,14 +190,19 @@ void loop() {
   json += "\"device_id\":\"" + String(deviceId) + "\",";
   json += "\"temperature\":" + String(tempC) + ",";
   json += "\"humidity\":" + String(hum) + ",";
-  json += "\"moisture1\":" + String(moist1Pct) + ",";
-  json += "\"moisture2\":" + String(moist2Pct) + ",";
+  json += "\"moisture1\":" + String(mc1) + ",";
+  json += "\"moisture2\":" + String(mc2) + ",";
+  json += "\"moisture3\":" + String(mc3) + ",";
+  json += "\"moisture4\":" + String(mc4) + ",";
+  json += "\"moisture5\":" + String(mc5) + ",";
+  json += "\"moisture6\":" + String(mc6) + ",";
   json += "\"weight1\":" + String(weight1Kg) + ",";
   json += "\"weight2\":" + String(weight2Kg) + ",";
   json += "\"status\":\"" + status + "\"";
   json += "}";
 
   int httpResponseCode = http.POST(json);
+
   Serial.print("HTTP Response: ");
   Serial.println(httpResponseCode);
 
