@@ -158,14 +158,14 @@ void loop() {
   else
     digitalWrite(RELAY_EXHAUST, HIGH);
 
-  if (avgMoisture <= 14.0)
+  if (avgMoisture <= 15.0)
     digitalWrite(RELAY_BLOWER, HIGH);
   else
     digitalWrite(RELAY_BLOWER, LOW);
 
   // ===================== STATUS =====================
   String status;
-  if (avgMoisture <= 14.0) status = "Completed";
+  if (avgMoisture <= 15.0) status = "Completed";
   else if (avgMoisture <= 20.0) status = "Warning";
   else status = "Drying";
 
