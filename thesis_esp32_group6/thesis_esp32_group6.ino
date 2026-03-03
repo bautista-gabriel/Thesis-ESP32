@@ -29,28 +29,20 @@ const int MOISTURE1_PIN = 32;
 const int MOISTURE2_PIN = 33;
 const int MOISTURE3_PIN = 34;
 const int MOISTURE4_PIN = 35;
-const int MOISTURE5_PIN = 36;   // VP
-const int MOISTURE6_PIN = 39;   // VN
+const int MOISTURE5_PIN = 36;
+const int MOISTURE6_PIN = 39;
 
-// ===== Calibration Anchors =====
-float dryPercent = 15.5;
-float wetPercent = 35.0;
+// ===== Calibration Anchor =====
+float dryPercent = 14.5;
 
-// Dry raw (based on your 15.5% measurement)
-float dry1 = 3060;
-float dry2 = 2470;
-float dry3 = 3020;
-float dry4 = 3120;
-float dry5 = 2450;
-float dry6 = 3100;
+float dry1 = 2479;
+float dry2 = 2500;
+float dry3 = 3064;
+float dry4 = 2444;
+float dry5 = 3095;
+float dry6 = 3020;
 
-// Temporary wet estimate
-float wet1 = 1700;
-float wet2 = 1700;
-float wet3 = 1700;
-float wet4 = 1700;
-float wet5 = 1700;
-float wet6 = 1700;
+float sensitivity = 0.015;
 
 // ===================== Timing =====================
 unsigned long lastSend = 0;
@@ -67,12 +59,10 @@ int readAnalogAvg(int pin, int samples) {
   return sum / samples;
 }
 
-float calibrateMoisture(int raw, float rawDry, float rawWet) {
-  float slope = (wetPercent - dryPercent) / (rawWet - rawDry);
-  float intercept = dryPercent - (slope * rawDry);
-  float mc = (slope * raw) + intercept;
+float calibrateMoisture(int raw, float rawDry) {
+  float mc = dryPercent + (rawDry - raw) * sensitivity;
   if (mc < 0) mc = 0;
-  if (mc > 100) mc = 100;
+  if (mc > 50) mc = 50;
   return mc;
 }
 
@@ -109,10 +99,12 @@ float trimmedMean(float m1, float m2, float m3,
 void connectWiFi() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
+
   Serial.println("\nWiFi Connected!");
 }
 
@@ -148,7 +140,7 @@ void loop() {
     connectWiFi();
   }
 
-  // ===== Raw Readings =====
+  // ===== Raw Moisture =====
   int raw1 = readAnalogAvg(MOISTURE1_PIN, 60);
   int raw2 = readAnalogAvg(MOISTURE2_PIN, 60);
   int raw3 = readAnalogAvg(MOISTURE3_PIN, 60);
@@ -157,59 +149,59 @@ void loop() {
   int raw6 = readAnalogAvg(MOISTURE6_PIN, 60);
 
   // ===== Calibrated Moisture =====
-  float mc1 = calibrateMoisture(raw1, dry1, wet1);
-  float mc2 = calibrateMoisture(raw2, dry2, wet2);
-  float mc3 = calibrateMoisture(raw3, dry3, wet3);
-  float mc4 = calibrateMoisture(raw4, dry4, wet4);
-  float mc5 = calibrateMoisture(raw5, dry5, wet5);
-  float mc6 = calibrateMoisture(raw6, dry6, wet6);
+  float mc1 = calibrateMoisture(raw1, dry1);
+  float mc2 = calibrateMoisture(raw2, dry2);
+  float mc3 = calibrateMoisture(raw3, dry3);
+  float mc4 = calibrateMoisture(raw4, dry4);
+  float mc5 = calibrateMoisture(raw5, dry5);
+  float mc6 = calibrateMoisture(raw6, dry6);
 
   float avgMoisture = trimmedMean(mc1, mc2, mc3, mc4, mc5, mc6);
 
+  // ===== Other Sensors =====
   float weightKg = readWeightKg();
 
   float tempC = dht.readTemperature();
   float hum = dht.readHumidity();
+
   if (isnan(tempC)) tempC = 0;
   if (isnan(hum)) hum = 0;
 
+  // ===== STATUS LOGIC =====
+  String status;
+
+  if (avgMoisture >= 14.0 && avgMoisture <= 14.2) {
+    status = "Completed";
+  }
+  else if (avgMoisture < 14.0 || tempC >= 45.0) {
+    status = "Warning";
+  }
+  else {
+    status = "Drying";
+  }
+
   // ===== RELAY CONTROL =====
-  if (tempC > 40.0)
+
+  // Blower OFF when Completed or Warning
+  if (status == "Completed" || status == "Warning") {
+    digitalWrite(RELAY_BLOWER, HIGH);
+  } else {
+    digitalWrite(RELAY_BLOWER, LOW);
+  }
+
+  // Exhaust ON if temperature > 30°C
+  if (tempC > 30.0)
     digitalWrite(RELAY_EXHAUST, LOW);
   else
     digitalWrite(RELAY_EXHAUST, HIGH);
 
-  if (avgMoisture <= 14.0)
-    digitalWrite(RELAY_BLOWER, HIGH);
-  else
-    digitalWrite(RELAY_BLOWER, LOW);
-
-  // ===== SERIAL OUTPUT =====
+  // ===== SERIAL MONITOR =====
   Serial.println("====================================");
-
-  Serial.print("Raw1: "); Serial.print(raw1);
-  Serial.print("  Moisture1: "); Serial.println(mc1);
-
-  Serial.print("Raw2: "); Serial.print(raw2);
-  Serial.print("  Moisture2: "); Serial.println(mc2);
-
-  Serial.print("Raw3: "); Serial.print(raw3);
-  Serial.print("  Moisture3: "); Serial.println(mc3);
-
-  Serial.print("Raw4: "); Serial.print(raw4);
-  Serial.print("  Moisture4: "); Serial.println(mc4);
-
-  Serial.print("Raw5: "); Serial.print(raw5);
-  Serial.print("  Moisture5: "); Serial.println(mc5);
-
-  Serial.print("Raw6: "); Serial.print(raw6);
-  Serial.print("  Moisture6: "); Serial.println(mc6);
-
-  Serial.print("Filtered Avg: "); Serial.println(avgMoisture);
+  Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
+  Serial.print("Temperature: "); Serial.println(tempC);
+  Serial.print("Humidity: "); Serial.println(hum);
   Serial.print("Weight (kg): "); Serial.println(weightKg);
-  Serial.print("Temp (C): "); Serial.println(tempC);
-  Serial.print("Humidity (%): "); Serial.println(hum);
-
+  Serial.print("Status: "); Serial.println(status);
   Serial.println("====================================");
 
   // ===== HTTP SEND =====
@@ -227,8 +219,9 @@ void loop() {
   json += "\"moisture4\":" + String(mc4) + ",";
   json += "\"moisture5\":" + String(mc5) + ",";
   json += "\"moisture6\":" + String(mc6) + ",";
-  json += "\"moisture_avg\":" + String(avgMoisture) + ",";
-  json += "\"weight\":" + String(weightKg);
+  json += "\"moistureavg\":" + String(avgMoisture) + ",";
+  json += "\"weight1\":" + String(weightKg) + ",";
+  json += "\"status\":\"" + status + "\"";
   json += "}";
 
   int httpResponseCode = http.POST(json);
