@@ -24,13 +24,13 @@ float calibrationFactor = 211830.0;
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
 
-// ===================== Moisture (ADC1 ONLY) =====================
-const int MOISTURE1_PIN = 32;
-const int MOISTURE2_PIN = 33;
-const int MOISTURE3_PIN = 34;
-const int MOISTURE4_PIN = 35;
-const int MOISTURE5_PIN = 36;
-const int MOISTURE6_PIN = 39;
+// ===================== Moisture =====================
+const int MOISTURE1_PIN = 32; //v1.2
+const int MOISTURE2_PIN = 33; //1.2
+const int MOISTURE3_PIN = 34; //1.2
+const int MOISTURE4_PIN = 35; //2.0
+const int MOISTURE5_PIN = 36; //vp 2.0
+const int MOISTURE6_PIN = 39; //vn 2.0
 
 // ===== Calibration Anchor =====
 float dryPercent = 14.5;
