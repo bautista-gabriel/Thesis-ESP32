@@ -190,12 +190,12 @@ void loop() {
 
   // ===== RELAY CONTROL =====
 
-  if (status == "Completed" || status == "Warning")
+  if (avgMoisture == 14)
     digitalWrite(RELAY_BLOWER, HIGH);
   else
     digitalWrite(RELAY_BLOWER, LOW);
 
-  if (tempC > 30.0)
+  if (tempC > 40.0)
     digitalWrite(RELAY_EXHAUST, LOW);
   else
     digitalWrite(RELAY_EXHAUST, HIGH);
