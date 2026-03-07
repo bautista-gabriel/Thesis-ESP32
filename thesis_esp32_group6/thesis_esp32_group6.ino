@@ -158,7 +158,7 @@ void loop() {
   float mc1 = calibrateMoisture(raw1, dry1, wet1);
   float mc2 = calibrateMoisture(raw2, dry2, wet2);
 
-  // duplicate so trimmed mean and server remain unchanged
+  // duplicate sensors to keep trimmed mean
   float mc3 = mc1;
   float mc4 = mc2;
   float mc5 = mc1;
@@ -172,33 +172,39 @@ void loop() {
   float tempC = dht.readTemperature();
   float hum = dht.readHumidity();
 
-  if (isnan(tempC)) tempC = 0;
-  if (isnan(hum)) hum = 0;
+  // ===== VALIDITY CHECKS =====
+  bool validMoisture = true;
+  bool validTemp = true;
 
-  // ===== STATUS LOGIC =====
-  String status;
+  if (isnan(avgMoisture) || avgMoisture <= 0)
+    validMoisture = false;
 
-  if (avgMoisture >= 14.0 && avgMoisture <= 14.2) {
-    status = "Completed";
-  }
-  else if (avgMoisture < 14.0 || tempC >= 40.0) {
-    status = "Warning";
-  }
-  else {
-    status = "Drying";
-  }
+  if (isnan(tempC) || tempC <= 0)
+    validTemp = false;
 
   // ===== RELAY CONTROL =====
 
-  if (avgMoisture == 14)
-    digitalWrite(RELAY_BLOWER, HIGH);
-  else
+  // Blower fail-safe
+  if (!validMoisture) {
     digitalWrite(RELAY_BLOWER, LOW);
+  }
+  else if (avgMoisture > 14.0 || avgMoisture < 13.0) {
+    digitalWrite(RELAY_BLOWER, LOW);
+  }
+  else {
+    digitalWrite(RELAY_BLOWER, HIGH);
+  }
 
-  if (tempC > 40.0)
+  // Exhaust fail-safe
+  if (!validTemp) {
     digitalWrite(RELAY_EXHAUST, LOW);
-  else
+  }
+  else if (tempC > 40.0) {
+    digitalWrite(RELAY_EXHAUST, LOW);
+  }
+  else {
     digitalWrite(RELAY_EXHAUST, HIGH);
+  }
 
   // ===== SERIAL MONITOR =====
   Serial.println("====================================");
@@ -214,7 +220,6 @@ void loop() {
   Serial.print("Temperature: "); Serial.println(tempC);
   Serial.print("Humidity: "); Serial.println(hum);
   Serial.print("Weight (kg): "); Serial.println(weightKg);
-  Serial.print("Status: "); Serial.println(status);
 
   Serial.println("====================================");
 
@@ -235,8 +240,7 @@ void loop() {
   json += "\"moisture5\":" + String(mc5) + ",";
   json += "\"moisture6\":" + String(mc6) + ",";
   json += "\"moistureavg\":" + String(avgMoisture) + ",";
-  json += "\"weight1\":" + String(weightKg) + ",";
-  json += "\"status\":\"" + status + "\"";
+  json += "\"weight1\":" + String(weightKg);
   json += "}";
 
   int httpResponseCode = http.POST(json);
