@@ -25,24 +25,22 @@ float calibrationFactor = 211830.0;
 DHT dht(DHTPIN, DHTTYPE);
 
 // ===================== Moisture =====================
-const int MOISTURE1_PIN = 32; //v1.2
-const int MOISTURE2_PIN = 33; //1.2
-const int MOISTURE3_PIN = 34; //1.2
-const int MOISTURE4_PIN = 35; //2.0
-const int MOISTURE5_PIN = 36; //vp 2.0
-const int MOISTURE6_PIN = 39; //vn 2.0
+const int MOISTURE1_PIN = 32;
+const int MOISTURE2_PIN = 33;
+const int MOISTURE3_PIN = 34;
+const int MOISTURE4_PIN = 35;
+const int MOISTURE5_PIN = 36;
+const int MOISTURE6_PIN = 39;
 
 // ===== Calibration Anchor =====
-float dryPercent = 14.5;
+float dryPercent = 14.0;
+float wetPercent = 15.4;
 
-float dry1 = 2479;
-float dry2 = 2500;
-float dry3 = 3064;
-float dry4 = 2444;
-float dry5 = 3095;
-float dry6 = 3020;
+float dry1 = 2561;
+float wet1 = 2508;
 
-float sensitivity = 0.015;
+float dry2 = 2571;
+float wet2 = 2520;
 
 // ===================== Timing =====================
 unsigned long lastSend = 0;
@@ -59,10 +57,15 @@ int readAnalogAvg(int pin, int samples) {
   return sum / samples;
 }
 
-float calibrateMoisture(int raw, float rawDry) {
-  float mc = dryPercent + (rawDry - raw) * sensitivity;
+float calibrateMoisture(int raw, float rawDry, float rawWet) {
+
+  float mc = dryPercent +
+             (rawDry - raw) * (wetPercent - dryPercent) /
+             (rawDry - rawWet);
+
   if (mc < 0) mc = 0;
   if (mc > 50) mc = 50;
+
   return mc;
 }
 
@@ -89,6 +92,7 @@ float trimmedMean(float m1, float m2, float m3,
   }
 
   float sum = 0;
+
   for (int i = 1; i < 5; i++) {
     sum += arr[i];
   }
@@ -97,6 +101,7 @@ float trimmedMean(float m1, float m2, float m3,
 }
 
 void connectWiFi() {
+
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
 
@@ -127,6 +132,7 @@ void setup() {
   scale.tare();
 
   dht.begin();
+
   connectWiFi();
 }
 
@@ -149,12 +155,14 @@ void loop() {
   int raw6 = readAnalogAvg(MOISTURE6_PIN, 60);
 
   // ===== Calibrated Moisture =====
-  float mc1 = calibrateMoisture(raw1, dry1);
-  float mc2 = calibrateMoisture(raw2, dry2);
-  float mc3 = calibrateMoisture(raw3, dry3);
-  float mc4 = calibrateMoisture(raw4, dry4);
-  float mc5 = calibrateMoisture(raw5, dry5);
-  float mc6 = calibrateMoisture(raw6, dry6);
+  float mc1 = calibrateMoisture(raw1, dry1, wet1);
+  float mc2 = calibrateMoisture(raw2, dry2, wet2);
+
+  // duplicate so trimmed mean and server remain unchanged
+  float mc3 = mc1;
+  float mc4 = mc2;
+  float mc5 = mc1;
+  float mc6 = mc2;
 
   float avgMoisture = trimmedMean(mc1, mc2, mc3, mc4, mc5, mc6);
 
@@ -173,7 +181,7 @@ void loop() {
   if (avgMoisture >= 14.0 && avgMoisture <= 14.2) {
     status = "Completed";
   }
-  else if (avgMoisture < 14.0 || tempC >= 45.0) {
+  else if (avgMoisture < 14.0 || tempC >= 40.0) {
     status = "Warning";
   }
   else {
@@ -182,14 +190,11 @@ void loop() {
 
   // ===== RELAY CONTROL =====
 
-  // Blower OFF when Completed or Warning
-  if (status == "Completed" || status == "Warning") {
+  if (status == "Completed" || status == "Warning")
     digitalWrite(RELAY_BLOWER, HIGH);
-  } else {
+  else
     digitalWrite(RELAY_BLOWER, LOW);
-  }
 
-  // Exhaust ON if temperature > 30°C
   if (tempC > 30.0)
     digitalWrite(RELAY_EXHAUST, LOW);
   else
@@ -197,15 +202,25 @@ void loop() {
 
   // ===== SERIAL MONITOR =====
   Serial.println("====================================");
+
+  Serial.print("Raw1: "); Serial.print(raw1); Serial.print("  Moisture1: "); Serial.println(mc1);
+  Serial.print("Raw2: "); Serial.print(raw2); Serial.print("  Moisture2: "); Serial.println(mc2);
+  Serial.print("Raw3: "); Serial.print(raw3); Serial.print("  Moisture3: "); Serial.println(mc3);
+  Serial.print("Raw4: "); Serial.print(raw4); Serial.print("  Moisture4: "); Serial.println(mc4);
+  Serial.print("Raw5: "); Serial.print(raw5); Serial.print("  Moisture5: "); Serial.println(mc5);
+  Serial.print("Raw6: "); Serial.print(raw6); Serial.print("  Moisture6: "); Serial.println(mc6);
+
   Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
   Serial.print("Temperature: "); Serial.println(tempC);
   Serial.print("Humidity: "); Serial.println(hum);
   Serial.print("Weight (kg): "); Serial.println(weightKg);
   Serial.print("Status: "); Serial.println(status);
+
   Serial.println("====================================");
 
   // ===== HTTP SEND =====
   HTTPClient http;
+
   http.begin(serverURL);
   http.addHeader("Content-Type", "application/json");
 
