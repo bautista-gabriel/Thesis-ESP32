@@ -1,13 +1,17 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include "HX711.h"
 #include "DHT.h"
 
 // ===================== WiFi =====================
 const char* ssid = "Raspi-Group6-Hotspot";
 const char* password = "raspberry123";
-const char* serverURL = "http://10.42.0.1:3000/sensor_readings";
-const char* deviceId = "esp32_01";
+
+const char* configURL = "http://10.42.0.1:5001/api/system/config";
+const char* sensorURL = "http://10.42.0.1:5001/api/sensor/data";
+
+unsigned long lastWifiAttempt = 0;
 
 // ===================== RELAYS =====================
 const int RELAY_BLOWER  = 25;
@@ -42,6 +46,11 @@ float wet1 = 2508;
 float dry2 = 2571;
 float wet2 = 2520;
 
+// ===== System Targets =====
+float targetMoisture = 13.5;
+float targetTemp = 42;
+int selectedTray = 1;
+
 // ===== Relay states =====
 bool blowerState = true;
 bool exhaustState = false;
@@ -53,11 +62,14 @@ const unsigned long sendInterval = 5000;
 // ===================== FUNCTIONS =====================
 
 int readAnalogAvg(int pin, int samples) {
+
   long sum = 0;
+
   for (int i = 0; i < samples; i++) {
     sum += analogRead(pin);
-    delayMicroseconds(500);
+    delay(2);
   }
+
   return sum / samples;
 }
 
@@ -74,17 +86,17 @@ float calibrateMoisture(int raw, float rawDry, float rawWet) {
 }
 
 float readWeightKg() {
-  if (!scale.is_ready()) return 0.0f;
 
-  float kg = scale.get_units(10);
+  if (!scale.is_ready()) return 0;
 
-  if (kg < 0) kg = 0;
+  float kg = scale.get_units(5);
+
+  if (isnan(kg) || kg < 0) kg = 0;
 
   return kg;
 }
 
-float trimmedMean(float m1, float m2, float m3,
-                  float m4, float m5, float m6) {
+float trimmedMean(float m1,float m2,float m3,float m4,float m5,float m6){
 
   float arr[6] = {m1,m2,m3,m4,m5,m6};
 
@@ -106,43 +118,119 @@ float trimmedMean(float m1, float m2, float m3,
   return sum / 4.0;
 }
 
-void connectWiFi() {
+// ===================== WiFi =====================
 
-  if (WiFi.status() == WL_CONNECTED) return;
+void connectWiFi(){
 
-  Serial.println("Connecting to WiFi");
+  if(WiFi.status()==WL_CONNECTED) return;
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  if(millis()-lastWifiAttempt < 15000) return;
 
-  unsigned long startAttemptTime = millis();
+  lastWifiAttempt = millis();
 
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - startAttemptTime < 10000) {
+  Serial.println("Connecting WiFi...");
 
-    delay(500);
-    Serial.print(".");
+  WiFi.disconnect();
+  WiFi.begin(ssid,password);
+}
+
+void maintainWiFi(){
+
+  if(WiFi.status()!=WL_CONNECTED){
+    connectWiFi();
+  }
+}
+
+// ===================== GET SYSTEM CONFIG =====================
+
+void getSystemConfig(){
+
+  if(WiFi.status()!=WL_CONNECTED) return;
+
+  HTTPClient http;
+
+  http.setTimeout(3000);
+  http.begin(configURL);
+
+  int code = http.GET();
+
+  if(code==200){
+
+    String payload = http.getString();
+
+    StaticJsonDocument<256> doc;
+
+    DeserializationError err = deserializeJson(doc,payload);
+
+    if(!err){
+
+      targetTemp = doc["config"]["selectedTemperature"] | targetTemp;
+      targetMoisture = doc["config"]["selectedMoisture"] | targetMoisture;
+      selectedTray = doc["config"]["selectedTray"] | selectedTray;
+
+      Serial.println("Dashboard config updated");
+    }
   }
 
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.println("\nWiFi Connected");
-  else
-    Serial.println("\nWiFi Failed");
+  http.end();
+}
+
+// ===================== SEND SENSOR DATA =====================
+
+void sendSensorData(float tempC,float hum,float weightKg,
+                    float mc1,float mc2,float mc3,
+                    float mc4,float mc5,float mc6,
+                    float avgMoisture){
+
+  if(WiFi.status()!=WL_CONNECTED) return;
+
+  HTTPClient http;
+
+  http.setTimeout(3000);
+  http.begin(sensorURL);
+  http.addHeader("Content-Type","application/json");
+
+  StaticJsonDocument<512> doc;
+
+  doc["temperature"] = tempC;
+  doc["humidity"] = hum;
+
+  doc["moisture1"] = mc1;
+  doc["moisture2"] = mc2;
+  doc["moisture3"] = mc3;
+  doc["moisture4"] = mc4;
+  doc["moisture5"] = mc5;
+  doc["moisture6"] = mc6;
+
+  doc["moistureavg"] = avgMoisture;
+
+  doc["weight1"] = weightKg;
+
+  doc["status"] = "Drying";
+
+  String body;
+
+  serializeJson(doc,body);
+
+  http.POST(body);
+
+  http.end();
 }
 
 // ===================== SETUP =====================
-void setup() {
+
+void setup(){
 
   Serial.begin(115200);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
-  pinMode(RELAY_BLOWER, OUTPUT);
-  pinMode(RELAY_EXHAUST, OUTPUT);
+  pinMode(RELAY_BLOWER,OUTPUT);
+  pinMode(RELAY_EXHAUST,OUTPUT);
 
-  digitalWrite(RELAY_BLOWER, HIGH);
-  digitalWrite(RELAY_EXHAUST, HIGH);
+  digitalWrite(RELAY_BLOWER,HIGH);
+  digitalWrite(RELAY_EXHAUST,HIGH);
 
   scale.begin(HX_DOUT,HX_SCK);
   scale.set_scale(calibrationFactor);
@@ -150,28 +238,36 @@ void setup() {
 
   dht.begin();
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+
   connectWiFi();
+
+  Serial.println("System Ready");
 }
 
 // ===================== LOOP =====================
-void loop() {
 
-  if (millis() - lastSend < sendInterval) {
-    delay(10);
+void loop(){
+
+  maintainWiFi();
+
+  if(millis()-lastSend < sendInterval){
+    delay(5);
     return;
   }
 
   lastSend = millis();
 
-  connectWiFi();
+  getSystemConfig();
 
   // ===== Raw Moisture =====
-  int raw1 = readAnalogAvg(MOISTURE1_PIN,60);
-  int raw2 = readAnalogAvg(MOISTURE2_PIN,60);
-  int raw3 = readAnalogAvg(MOISTURE3_PIN,60);
-  int raw4 = readAnalogAvg(MOISTURE4_PIN,60);
-  int raw5 = readAnalogAvg(MOISTURE5_PIN,60);
-  int raw6 = readAnalogAvg(MOISTURE6_PIN,60);
+  int raw1 = readAnalogAvg(MOISTURE1_PIN,10);
+  int raw2 = readAnalogAvg(MOISTURE2_PIN,10);
+  int raw3 = readAnalogAvg(MOISTURE3_PIN,10);
+  int raw4 = readAnalogAvg(MOISTURE4_PIN,10);
+  int raw5 = readAnalogAvg(MOISTURE5_PIN,10);
+  int raw6 = readAnalogAvg(MOISTURE6_PIN,10);
 
   // ===== Calibrated Moisture =====
   float mc1 = calibrateMoisture(raw1,dry1,wet1);
@@ -184,86 +280,45 @@ void loop() {
 
   float avgMoisture = trimmedMean(mc1,mc2,mc3,mc4,mc5,mc6);
 
-  // ===== Other Sensors =====
   float weightKg = readWeightKg();
 
   float tempC = dht.readTemperature();
   float hum = dht.readHumidity();
 
-  if (isnan(tempC)) tempC = 0;
-  if (isnan(hum)) hum = 0;
+  if(isnan(tempC)) tempC = 0;
+  if(isnan(hum)) hum = 0;
 
   // ===== BLOWER CONTROL =====
-  if (!isnan(avgMoisture)) {
+  if(avgMoisture > targetMoisture)
+    blowerState = true;
+  else if(avgMoisture >= targetMoisture-1 && avgMoisture <= targetMoisture)
+    blowerState = false;
+  else
+    blowerState = true;
 
-    if (avgMoisture > 14.0)
-      blowerState = true;
-    else if (avgMoisture >= 13.0 && avgMoisture <= 14.0)
-      blowerState = false;
-    else if (avgMoisture < 13.0)
-      blowerState = true;
-  }
-
-  digitalWrite(RELAY_BLOWER, blowerState ? LOW : HIGH);
+  digitalWrite(RELAY_BLOWER, blowerState ? HIGH : LOW);
 
   // ===== EXHAUST CONTROL =====
-  if (!isnan(tempC)) {
-
-    if (tempC > 40.0)
-      exhaustState = true;
-    else
-      exhaustState = false;
-  }
+  if(tempC >= targetTemp)
+    exhaustState = true;
+  else
+    exhaustState = false;
 
   digitalWrite(RELAY_EXHAUST, exhaustState ? LOW : HIGH);
 
- // ===== SERIAL MONITOR =====
-Serial.println("====================================");
+  // ===== SEND DATA =====
+  sendSensorData(tempC,hum,weightKg,
+                 mc1,mc2,mc3,
+                 mc4,mc5,mc6,
+                 avgMoisture);
 
-Serial.print("Raw1: "); Serial.print(raw1); Serial.print("  Moisture1: "); Serial.println(mc1);
-Serial.print("Raw2: "); Serial.print(raw2); Serial.print("  Moisture2: "); Serial.println(mc2);
-Serial.print("Raw3: "); Serial.print(raw3); Serial.print("  Moisture3: "); Serial.println(mc3);
-Serial.print("Raw4: "); Serial.print(raw4); Serial.print("  Moisture4: "); Serial.println(mc4);
-Serial.print("Raw5: "); Serial.print(raw5); Serial.print("  Moisture5: "); Serial.println(mc5);
-Serial.print("Raw6: "); Serial.print(raw6); Serial.print("  Moisture6: "); Serial.println(mc6);
+  // ===== SERIAL DEBUG =====
+  Serial.println("====================================");
 
-Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
-Serial.print("Temperature: "); Serial.println(tempC);
-Serial.print("Humidity: "); Serial.println(hum);
-Serial.print("Weight (kg): "); Serial.println(weightKg);
+  Serial.print("Temp: "); Serial.println(tempC);
+  Serial.print("Humidity: "); Serial.println(hum);
+  Serial.print("Weight: "); Serial.println(weightKg);
+  Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
 
-Serial.println("====================================");
-
-  // ===== HTTP SEND =====
-  if (WiFi.status() == WL_CONNECTED) {
-
-    HTTPClient http;
-    http.setTimeout(2000);
-
-    if (http.begin(serverURL)) {
-
-      http.addHeader("Content-Type", "application/json");
-
-      String json = "{";
-      json += "\"device_id\":\"" + String(deviceId) + "\",";
-      json += "\"temperature\":" + String(tempC) + ",";
-      json += "\"humidity\":" + String(hum) + ",";
-      json += "\"moisture1\":" + String(mc1) + ",";
-      json += "\"moisture2\":" + String(mc2) + ",";
-      json += "\"moisture3\":" + String(mc3) + ",";
-      json += "\"moisture4\":" + String(mc4) + ",";
-      json += "\"moisture5\":" + String(mc5) + ",";
-      json += "\"moisture6\":" + String(mc6) + ",";
-      json += "\"moistureavg\":" + String(avgMoisture) + ",";
-      json += "\"weight1\":" + String(weightKg);
-      json += "}";
-
-      int httpResponseCode = http.POST(json);
-
-      Serial.print("HTTP Response: ");
-      Serial.println(httpResponseCode);
-
-      http.end();
-    }
-  }
+  Serial.println("====================================");
 }
