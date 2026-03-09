@@ -11,8 +11,6 @@ const char* password = "raspberry123";
 const char* configURL = "http://10.42.0.1:5001/api/system/config";
 const char* sensorURL = "http://10.42.0.1:5001/api/sensor/data";
 
-unsigned long lastWifiAttempt = 0;
-
 // ===================== RELAYS =====================
 const int RELAY_BLOWER  = 25;
 const int RELAY_EXHAUST = 26;
@@ -118,27 +116,24 @@ float trimmedMean(float m1,float m2,float m3,float m4,float m5,float m6){
   return sum / 4.0;
 }
 
-// ===================== WiFi =====================
+// ===================== WIFI =====================
 
-void connectWiFi(){
+void connectWiFi() {
 
-  if(WiFi.status()==WL_CONNECTED) return;
+  if (WiFi.status() == WL_CONNECTED) return;
 
-  if(millis()-lastWifiAttempt < 15000) return;
+  Serial.println("Connecting to WiFi...");
 
-  lastWifiAttempt = millis();
+  WiFi.begin(ssid, password);
 
-  Serial.println("Connecting WiFi...");
-
-  WiFi.disconnect();
-  WiFi.begin(ssid,password);
-}
-
-void maintainWiFi(){
-
-  if(WiFi.status()!=WL_CONNECTED){
-    connectWiFi();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
   }
+
+  Serial.println("\nWiFi connected");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 }
 
 // ===================== GET SYSTEM CONFIG =====================
@@ -149,7 +144,6 @@ void getSystemConfig(){
 
   HTTPClient http;
 
-  http.setTimeout(3000);
   http.begin(configURL);
 
   int code = http.GET();
@@ -186,11 +180,12 @@ void sendSensorData(float tempC,float hum,float weightKg,
 
   HTTPClient http;
 
-  http.setTimeout(3000);
   http.begin(sensorURL);
   http.addHeader("Content-Type","application/json");
 
   StaticJsonDocument<512> doc;
+
+  doc["device_id"] = "esp32_01";
 
   doc["temperature"] = tempC;
   doc["humidity"] = hum;
@@ -210,9 +205,21 @@ void sendSensorData(float tempC,float hum,float weightKg,
 
   String body;
 
-  serializeJson(doc,body);
+  serializeJson(doc, body);
 
-  http.POST(body);
+  Serial.println("Sending JSON:");
+  Serial.println(body);
+
+  int httpCode = http.POST(body);
+
+  Serial.print("POST Response Code: ");
+  Serial.println(httpCode);
+
+  if(httpCode > 0){
+    String response = http.getString();
+    Serial.println("Server Response:");
+    Serial.println(response);
+  }
 
   http.end();
 }
@@ -250,7 +257,7 @@ void setup(){
 
 void loop(){
 
-  maintainWiFi();
+  connectWiFi();
 
   if(millis()-lastSend < sendInterval){
     delay(5);
@@ -261,7 +268,6 @@ void loop(){
 
   getSystemConfig();
 
-  // ===== Raw Moisture =====
   int raw1 = readAnalogAvg(MOISTURE1_PIN,10);
   int raw2 = readAnalogAvg(MOISTURE2_PIN,10);
   int raw3 = readAnalogAvg(MOISTURE3_PIN,10);
@@ -269,7 +275,6 @@ void loop(){
   int raw5 = readAnalogAvg(MOISTURE5_PIN,10);
   int raw6 = readAnalogAvg(MOISTURE6_PIN,10);
 
-  // ===== Calibrated Moisture =====
   float mc1 = calibrateMoisture(raw1,dry1,wet1);
   float mc2 = calibrateMoisture(raw2,dry2,wet2);
 
@@ -288,7 +293,6 @@ void loop(){
   if(isnan(tempC)) tempC = 0;
   if(isnan(hum)) hum = 0;
 
-  // ===== BLOWER CONTROL =====
   if(avgMoisture > targetMoisture)
     blowerState = true;
   else if(avgMoisture >= targetMoisture-1 && avgMoisture <= targetMoisture)
@@ -298,7 +302,6 @@ void loop(){
 
   digitalWrite(RELAY_BLOWER, blowerState ? HIGH : LOW);
 
-  // ===== EXHAUST CONTROL =====
   if(tempC >= targetTemp)
     exhaustState = true;
   else
@@ -306,19 +309,15 @@ void loop(){
 
   digitalWrite(RELAY_EXHAUST, exhaustState ? LOW : HIGH);
 
-  // ===== SEND DATA =====
   sendSensorData(tempC,hum,weightKg,
                  mc1,mc2,mc3,
                  mc4,mc5,mc6,
                  avgMoisture);
 
-  // ===== SERIAL DEBUG =====
   Serial.println("====================================");
-
   Serial.print("Temp: "); Serial.println(tempC);
   Serial.print("Humidity: "); Serial.println(hum);
   Serial.print("Weight: "); Serial.println(weightKg);
   Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
-
   Serial.println("====================================");
 }
