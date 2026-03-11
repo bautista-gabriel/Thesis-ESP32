@@ -44,6 +44,18 @@ float wet1 = 2508;
 float dry2 = 2571;
 float wet2 = 2520;
 
+float dry3 = 2561;
+float wet3 = 2508;
+
+float dry4 = 2571;
+float wet4 = 2520;
+
+float dry5 = 2561;
+float wet5 = 2508;
+
+float dry6 = 2571;
+float wet6 = 2520;
+
 // ===== System Targets =====
 float targetMoisture = 0;
 float targetTemp = 0;
@@ -52,17 +64,12 @@ int selectedTray = 0;
 bool systemRunning = false;
 
 // ===== Relay states =====
-bool blowerState = true;
+bool blowerState = false;
 bool exhaustState = false;
-
-// ===================== Timing =====================
-unsigned long lastSend = 0;
-const unsigned long sendInterval = 5000;
-
 
 // ===================== FUNCTIONS =====================
 
-int readAnalogAvg(int pin, int samples){
+int readAnalogAvg(int pin,int samples){
 
 long sum=0;
 
@@ -118,7 +125,6 @@ sum+=arr[i];
 return sum/4.0;
 }
 
-
 // ===================== WIFI =====================
 
 void connectWiFi(){
@@ -140,7 +146,6 @@ Serial.println(WiFi.localIP());
 
 }
 
-
 // ===================== GET CONFIG =====================
 
 void getSystemConfig(){
@@ -152,10 +157,13 @@ HTTPClient http;
 http.begin(configURL);
 
 int code=http.GET();
+Serial.print("HTTP Config Code: ");
+Serial.println(code);
 
 if(code==200){
 
 String payload=http.getString();
+Serial.println(payload);
 
 StaticJsonDocument<256> doc;
 
@@ -171,7 +179,7 @@ targetTemp=doc["config"]["selectedTemperature"];
 targetMoisture=doc["config"]["selectedMoisture"];
 selectedTray=doc["config"]["selectedTray"];
 
-systemRunning=doc["running"];
+systemRunning = doc["running"];
 
 Serial.println("========= DASHBOARD SETTINGS =========");
 
@@ -193,7 +201,6 @@ Serial.println("======================================");
 
 http.end();
 }
-
 
 // ===================== SEND SENSOR DATA =====================
 
@@ -244,7 +251,6 @@ Serial.println(httpCode);
 http.end();
 }
 
-
 // ===================== SETUP =====================
 
 void setup(){
@@ -257,6 +263,7 @@ analogSetAttenuation(ADC_11db);
 pinMode(RELAY_BLOWER,OUTPUT);
 pinMode(RELAY_EXHAUST,OUTPUT);
 
+// RELAYS OFF
 digitalWrite(RELAY_BLOWER,HIGH);
 digitalWrite(RELAY_EXHAUST,HIGH);
 
@@ -275,34 +282,12 @@ Serial.println("System Ready");
 
 }
 
-
 // ===================== LOOP =====================
 
 void loop(){
 
 connectWiFi();
-
 getSystemConfig();
-
-if(targetTemp==0 || targetMoisture==0){
-
-Serial.println("Waiting for dashboard start values...");
-delay(2000);
-return;
-
-}
-
-if(!systemRunning){
-
-Serial.println("SYSTEM STOPPED FROM DASHBOARD");
-
-digitalWrite(RELAY_BLOWER,HIGH);
-digitalWrite(RELAY_EXHAUST,HIGH);
-
-delay(2000);
-return;
-
-}
 
 // ===== RAW ADC =====
 
@@ -315,13 +300,12 @@ int raw6=readAnalogAvg(MOISTURE6_PIN,10);
 
 // ===== MOISTURE =====
 
-float mc1=calibrateMoisture(raw1,dry1,wet1);
-float mc2=calibrateMoisture(raw2,dry2,wet2);
-
-float mc3=mc1;
-float mc4=mc2;
-float mc5=mc1;
-float mc6=mc2;
+float mc1 = calibrateMoisture(raw1,dry1,wet1);
+float mc2 = calibrateMoisture(raw2,dry2,wet2);
+float mc3 = calibrateMoisture(raw3,dry3,wet3);
+float mc4 = calibrateMoisture(raw4,dry4,wet4);
+float mc5 = calibrateMoisture(raw5,dry5,wet5);
+float mc6 = calibrateMoisture(raw6,dry6,wet6);
 
 float avgMoisture=trimmedMean(mc1,mc2,mc3,mc4,mc5,mc6);
 
@@ -333,28 +317,39 @@ float hum=dht.readHumidity();
 if(isnan(tempC)) tempC=0;
 if(isnan(hum)) hum=0;
 
+// ===== BLOWER CONTROL =====
 
-// ===== YOUR ORIGINAL BLOWER LOGIC =====
+if(systemRunning){
 
-if(avgMoisture>targetMoisture)
-blowerState=true;
-else if(avgMoisture>=targetMoisture-1 && avgMoisture<=targetMoisture)
-blowerState=false;
+if(avgMoisture > targetMoisture)
+blowerState = true;
 else
-blowerState=true;
+blowerState = false;
 
-digitalWrite(RELAY_BLOWER,blowerState?HIGH:LOW);
+digitalWrite(RELAY_BLOWER, blowerState ? LOW : HIGH);
 
+}else{
 
-// ===== EXHAUST LOGIC =====
+digitalWrite(RELAY_BLOWER, HIGH);
 
-if(tempC>=targetTemp)
-exhaustState=true;
+}
+
+// ===== EXHAUST CONTROL =====
+
+if(systemRunning){
+
+if(tempC >= targetTemp)
+exhaustState = true;
 else
-exhaustState=false;
+exhaustState = false;
 
-digitalWrite(RELAY_EXHAUST,exhaustState?LOW:HIGH);
+digitalWrite(RELAY_EXHAUST, exhaustState ? LOW : HIGH);
 
+}else{
+
+digitalWrite(RELAY_EXHAUST, HIGH);
+
+}
 
 // ===== SEND DATA =====
 
@@ -362,7 +357,6 @@ sendSensorData(tempC,hum,weightKg,
 mc1,mc2,mc3,
 mc4,mc5,mc6,
 avgMoisture);
-
 
 // ===== SERIAL PRINT =====
 
