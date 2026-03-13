@@ -36,25 +36,25 @@ const int MOISTURE6_PIN = 39;
 
 // ===== Calibration =====
 float dryPercent = 14.0;
-float wetPercent = 15.4;
+float wetPercent = 22.0;
 
-float dry1 = 2561;
-float wet1 = 2508;
+float dry1 = 2529;
+float wet1 = 2447;
 
-float dry2 = 2571;
-float wet2 = 2520;
+float dry2 = 2550;
+float wet2 = 2473;
 
-float dry3 = 2561;
-float wet3 = 2508;
+float dry3 = 2533;
+float wet3 = 2464;
 
-float dry4 = 2571;
-float wet4 = 2520;
+float dry4 = 3155;
+float wet4 = 2926;
 
-float dry5 = 2561;
-float wet5 = 2508;
+float dry5 = 3173;
+float wet5 = 2930;
 
-float dry6 = 2571;
-float wet6 = 2520;
+float dry6 = 3119;
+float wet6 = 2904;
 
 // ===== System Targets =====
 float targetMoisture = 0;
@@ -76,6 +76,7 @@ long sum=0;
 for(int i=0;i<samples;i++){
 sum+=analogRead(pin);
 delay(2);
+yield();
 }
 
 return sum/samples;
@@ -96,33 +97,30 @@ float readWeightKg(){
 
 if(!scale.is_ready()) return 0;
 
-float kg = scale.get_units(5);
+float kg = scale.get_units(2);
 
 if(isnan(kg)||kg<0) kg=0;
 
 return kg;
 }
 
-float trimmedMean(float m1,float m2,float m3,float m4,float m5,float m6){
+// ===== Tray Based Average =====
 
-float arr[6]={m1,m2,m3,m4,m5,m6};
+float trayAverage(float m1,float m2,float m3,float m4,float m5,float m6,int trays){
 
-for(int i=0;i<5;i++){
-for(int j=i+1;j<6;j++){
-if(arr[j]<arr[i]){
-float t=arr[i];
-arr[i]=arr[j];
-arr[j]=t;
-}
-}
-}
+float sum = 0;
+int count = 0;
 
-float sum=0;
+if(trays >= 1){ sum += m1; count++; }
+if(trays >= 2){ sum += m2; count++; }
+if(trays >= 3){ sum += m3; count++; }
+if(trays >= 4){ sum += m4; count++; }
+if(trays >= 5){ sum += m5; count++; }
+if(trays >= 6){ sum += m6; count++; }
 
-for(int i=1;i<5;i++)
-sum+=arr[i];
+if(count == 0) return 0;
 
-return sum/4.0;
+return sum / count;
 }
 
 // ===================== WIFI =====================
@@ -153,7 +151,7 @@ void getSystemConfig(){
 if(WiFi.status()!=WL_CONNECTED) return;
 
 HTTPClient http;
-
+http.setTimeout(3000);
 http.begin(configURL);
 
 int code=http.GET();
@@ -213,6 +211,7 @@ if(WiFi.status()!=WL_CONNECTED) return;
 
 HTTPClient http;
 
+http.setTimeout(3000);
 http.begin(sensorURL);
 http.addHeader("Content-Type","application/json");
 
@@ -263,7 +262,6 @@ analogSetAttenuation(ADC_11db);
 pinMode(RELAY_BLOWER,OUTPUT);
 pinMode(RELAY_EXHAUST,OUTPUT);
 
-// RELAYS OFF
 digitalWrite(RELAY_BLOWER,HIGH);
 digitalWrite(RELAY_EXHAUST,HIGH);
 
@@ -307,7 +305,11 @@ float mc4 = calibrateMoisture(raw4,dry4,wet4);
 float mc5 = calibrateMoisture(raw5,dry5,wet5);
 float mc6 = calibrateMoisture(raw6,dry6,wet6);
 
-float avgMoisture=trimmedMean(mc1,mc2,mc3,mc4,mc5,mc6);
+// ===== Tray Based Average =====
+
+float avgMoisture = trayAverage(mc1,mc2,mc3,mc4,mc5,mc6,selectedTray);
+
+// ===== Sensors =====
 
 float weightKg=readWeightKg();
 
@@ -362,6 +364,8 @@ avgMoisture);
 
 Serial.println("=========== SENSOR DATA ===========");
 
+Serial.print("Tray Count: "); Serial.println(selectedTray);
+
 Serial.print("RAW ADC 1: "); Serial.println(raw1);
 Serial.print("RAW ADC 2: "); Serial.println(raw2);
 Serial.print("RAW ADC 3: "); Serial.println(raw3);
@@ -381,14 +385,14 @@ Serial.print("Average Moisture: "); Serial.println(avgMoisture);
 Serial.print("Temperature: "); Serial.println(tempC);
 Serial.print("Humidity: "); Serial.println(hum);
 
-Serial.print("Blower: ");
-Serial.println(blowerState?"ON":"OFF");
+Serial.print("Weight (kg): "); Serial.println(weightKg);
 
-Serial.print("Exhaust: ");
-Serial.println(exhaustState?"ON":"OFF");
+Serial.print("Blower: "); Serial.println(blowerState?"ON":"OFF");
+Serial.print("Exhaust: "); Serial.println(exhaustState?"ON":"OFF");
 
 Serial.println("===================================");
 
+yield();
 delay(5000);
 
 }
