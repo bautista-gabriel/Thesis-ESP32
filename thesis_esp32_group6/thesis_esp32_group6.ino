@@ -93,6 +93,8 @@ if(mc>50) mc=50;
 return mc;
 }
 
+
+
 float readWeightKg(){
 
 if(!scale.is_ready()) return 0;
