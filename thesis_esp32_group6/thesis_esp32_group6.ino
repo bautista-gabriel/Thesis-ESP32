@@ -8,7 +8,11 @@
 const char* ssid = "Raspi-Group6-Hotspot";
 const char* password = "raspberry123";
 
+<<<<<<< Updated upstream
 const char* configURL = "http://10.42.0.1:5001/api/system/config";
+=======
+const char* configURL = "http://10.42.0.1:5002/api/system/config";
+>>>>>>> Stashed changes
 const char* sensorURL = "http://10.42.0.1:5001/api/sensor/data";
 
 // ===================== RELAYS =====================
@@ -59,7 +63,13 @@ float wet6 = 2904;
 // ===== System Targets =====
 float targetMoisture = 0;
 float targetTemp = 0;
+<<<<<<< Updated upstream
 int selectedTray = 0;
+=======
+
+int selectedTrays[6];
+int trayCount = 0;
+>>>>>>> Stashed changes
 
 bool systemRunning = false;
 
@@ -67,6 +77,10 @@ bool systemRunning = false;
 bool blowerState = false;
 bool exhaustState = false;
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===================== FUNCTIONS =====================
 
 int readAnalogAvg(int pin,int samples){
@@ -93,6 +107,7 @@ if(mc>50) mc=50;
 return mc;
 }
 
+<<<<<<< Updated upstream
 
 
 float readWeightKg(){
@@ -109,10 +124,47 @@ return kg;
 // ===== Tray Based Average =====
 
 float trayAverage(float m1,float m2,float m3,float m4,float m5,float m6,int trays){
+=======
+float stableMoisture(int pin,float rawDry,float rawWet){
+
+float sum = 0;
+
+for(int i=0;i<5;i++){
+
+int raw = readAnalogAvg(pin,5);
+float mc = calibrateMoisture(raw,rawDry,rawWet);
+
+sum += mc;
+
+delay(5);
+}
+
+return sum/5;
+}
+
+float readWeightKg(){
+
+if(!scale.is_ready()) return 0;
+
+float kg = scale.get_units(2);
+
+if(isnan(kg)||kg<0) kg=0;
+
+return kg;
+}
+
+
+// ===== Tray Based Average =====
+
+float trayAverage(float m1,float m2,float m3,float m4,float m5,float m6){
+
+float values[6] = {m1,m2,m3,m4,m5,m6};
+>>>>>>> Stashed changes
 
 float sum = 0;
 int count = 0;
 
+<<<<<<< Updated upstream
 if(trays >= 1){ sum += m1; count++; }
 if(trays >= 2){ sum += m2; count++; }
 if(trays >= 3){ sum += m3; count++; }
@@ -125,6 +177,25 @@ if(count == 0) return 0;
 return sum / count;
 }
 
+=======
+for(int i=0;i<trayCount;i++){
+
+int tray = selectedTrays[i] - 1;
+
+if(tray >=0 && tray <6){
+sum += values[tray];
+count++;
+}
+
+}
+
+if(count==0) return 0;
+
+return sum/count;
+}
+
+
+>>>>>>> Stashed changes
 // ===================== WIFI =====================
 
 void connectWiFi(){
@@ -146,6 +217,10 @@ Serial.println(WiFi.localIP());
 
 }
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===================== GET CONFIG =====================
 
 void getSystemConfig(){
@@ -157,6 +232,7 @@ http.setTimeout(3000);
 http.begin(configURL);
 
 int code=http.GET();
+<<<<<<< Updated upstream
 Serial.print("HTTP Config Code: ");
 Serial.println(code);
 
@@ -200,7 +276,84 @@ Serial.println("======================================");
 }
 
 http.end();
+=======
+
+Serial.print("HTTP Config Code: ");
+Serial.println(code);
+
+if(code==200){
+
+String payload=http.getString();
+Serial.println(payload);
+
+StaticJsonDocument<512> doc;
+
+DeserializationError err = deserializeJson(doc,payload);
+
+if(err){
+Serial.println("JSON parse failed");
+http.end();
+return;
+>>>>>>> Stashed changes
 }
+
+targetTemp=doc["config"]["selectedTemperature"];
+targetMoisture=doc["config"]["selectedMoisture"];
+
+trayCount = 0;
+
+for(int i=0;i<6;i++){
+selectedTrays[i] = 0;
+}
+
+JsonArray trays = doc["config"]["selectedTrays"];
+
+if(!trays.isNull()){
+
+for(JsonVariant v : trays){
+
+int tray = v.as<int>();
+
+if(tray>=1 && tray<=6 && trayCount<6){
+
+selectedTrays[trayCount] = tray;
+trayCount++;
+
+}
+
+}
+
+}
+
+systemRunning = doc["running"];
+
+Serial.println("========= DASHBOARD SETTINGS =========");
+
+Serial.print("Selected Temperature: ");
+Serial.println(targetTemp);
+
+Serial.print("Selected Moisture: ");
+Serial.println(targetMoisture);
+
+Serial.print("Selected Trays: ");
+
+for(int i=0;i<trayCount;i++){
+Serial.print(selectedTrays[i]);
+Serial.print(" ");
+}
+
+Serial.println();
+
+Serial.print("System Running: ");
+Serial.println(systemRunning);
+
+Serial.println("======================================");
+
+}
+
+http.end();
+}
+
 
 // ===================== SEND SENSOR DATA =====================
 
@@ -252,11 +405,19 @@ Serial.println(httpCode);
 http.end();
 }
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===================== SETUP =====================
 
 void setup(){
 
 Serial.begin(115200);
+<<<<<<< Updated upstream
+=======
+delay(2000);
+>>>>>>> Stashed changes
 
 analogReadResolution(12);
 analogSetAttenuation(ADC_11db);
@@ -282,6 +443,10 @@ Serial.println("System Ready");
 
 }
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===================== LOOP =====================
 
 void loop(){
@@ -289,6 +454,7 @@ void loop(){
 connectWiFi();
 getSystemConfig();
 
+<<<<<<< Updated upstream
 // ===== RAW ADC =====
 
 int raw1=readAnalogAvg(MOISTURE1_PIN,10);
@@ -312,6 +478,16 @@ float mc6 = calibrateMoisture(raw6,dry6,wet6);
 float avgMoisture = trayAverage(mc1,mc2,mc3,mc4,mc5,mc6,selectedTray);
 
 // ===== Sensors =====
+=======
+float mc1 = stableMoisture(MOISTURE1_PIN,dry1,wet1);
+float mc2 = stableMoisture(MOISTURE2_PIN,dry2,wet2);
+float mc3 = stableMoisture(MOISTURE3_PIN,dry3,wet3);
+float mc4 = stableMoisture(MOISTURE4_PIN,dry4,wet4);
+float mc5 = stableMoisture(MOISTURE5_PIN,dry5,wet5);
+float mc6 = stableMoisture(MOISTURE6_PIN,dry6,wet6);
+
+float avgMoisture = trayAverage(mc1,mc2,mc3,mc4,mc5,mc6);
+>>>>>>> Stashed changes
 
 float weightKg=readWeightKg();
 
@@ -321,6 +497,10 @@ float hum=dht.readHumidity();
 if(isnan(tempC)) tempC=0;
 if(isnan(hum)) hum=0;
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===== BLOWER CONTROL =====
 
 if(systemRunning){
@@ -338,6 +518,10 @@ digitalWrite(RELAY_BLOWER, HIGH);
 
 }
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===== EXHAUST CONTROL =====
 
 if(systemRunning){
@@ -355,6 +539,10 @@ digitalWrite(RELAY_EXHAUST, HIGH);
 
 }
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===== SEND DATA =====
 
 sendSensorData(tempC,hum,weightKg,
@@ -362,10 +550,15 @@ mc1,mc2,mc3,
 mc4,mc5,mc6,
 avgMoisture);
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 // ===== SERIAL PRINT =====
 
 Serial.println("=========== SENSOR DATA ===========");
 
+<<<<<<< Updated upstream
 Serial.print("Tray Count: "); Serial.println(selectedTray);
 
 Serial.print("RAW ADC 1: "); Serial.println(raw1);
@@ -391,6 +584,32 @@ Serial.print("Weight (kg): "); Serial.println(weightKg);
 
 Serial.print("Blower: "); Serial.println(blowerState?"ON":"OFF");
 Serial.print("Exhaust: "); Serial.println(exhaustState?"ON":"OFF");
+=======
+Serial.print("Selected Trays: ");
+for(int i=0;i<trayCount;i++){
+Serial.print(selectedTrays[i]);
+Serial.print(" ");
+}
+Serial.println();
+
+Serial.print("Average Moisture: ");
+Serial.println(avgMoisture);
+
+Serial.print("Temperature: ");
+Serial.println(tempC);
+
+Serial.print("Humidity: ");
+Serial.println(hum);
+
+Serial.print("Weight (kg): ");
+Serial.println(weightKg);
+
+Serial.print("Blower: ");
+Serial.println(blowerState?"ON":"OFF");
+
+Serial.print("Exhaust: ");
+Serial.println(exhaustState?"ON":"OFF");
+>>>>>>> Stashed changes
 
 Serial.println("===================================");
 
